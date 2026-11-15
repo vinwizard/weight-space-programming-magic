@@ -15,7 +15,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt   # Python 3.
 .venv/bin/python replay_edit.py    # their p50c edit -> weights/their_edit (sha256 checked)
 .venv/bin/python find_loop.py      # forward passes -> out/loop.npz and the table below (about a minute)
 .venv/bin/python make_edit.py      # our edit -> weights/our_edit, compared with theirs
-nohup nice -n 10 .venv/bin/python score.py their_edit our_edit base > out/score.log 2>&1 &   # hours; rerun to resume
+nohup nice -n 10 .venv/bin/python score.py their_edit our_edit base > out/score.log 2>&1 &   # ~80 min; rerun to resume
 ```
 
 `weights/`, `out/` and `.venv/` are ignored by git (`.gitignore` in this folder).
@@ -95,7 +95,22 @@ the size of the edit (bfloat16 forward passes on Apple's GPU instead of the expe
 
 ## Results
 
-RESULTS_PLACEHOLDER
+100 MATH-500 + 100 GSM8K test problems, 1 sample each, at most 8,192 new tokens (output of `score.py`; the
+generation took about 80 minutes for the three models on the M5 Pro):
+
+| Model | MATH-500 | GSM8K | MATH-500 cut at 8,192 | GSM8K cut at 8,192 | cut answers ending in a verbatim loop |
+|---|---:|---:|---:|---:|---:|
+| Original Qwen3.5-0.8B | 6.0 % | 11.0 % | 95 % | 90 % | 98 of 185 (53 %) |
+| Their p50c edit (`../runs/p50c/edit`) | 15.0 % | 35.0 % | 85 % | 63 % | 0 of 148 |
+| Our edit (`make_edit.py`) | 11.0 % | 33.0 % | 89 % | 66 % | 1 of 155 |
+
+The post, at 32,768 tokens and 4 / 2 samples on the full sets: original 7.9 / 13.8, p50c 48.1 / 67.1 (MATH-500 /
+GSM8K). At 8,192 tokens the same gap shows, only smaller: both edits about triple GSM8K and more than double the original's
+MATH-500 (with 100 problems one standard error is about 3-5 points, so their edit and ours are not clearly apart). Most
+edited answers still reach 8,192 tokens, but they no longer end in a loop ("verbatim loop" = `../code/mathqa.py`'s
+`loop_signals` test: the text ends with one block repeated at least 3 times): they are cut while still reasoning.
+Astra measured a median of 9,172 tokens for the edited model's correct practice answers (`../runs/p50c/final_answer.md`),
+above this cap, which is why the paper's 32k cap shows a much larger gain.
 
 ## Where this differs from the experiment, or had to guess
 
@@ -111,6 +126,8 @@ RESULTS_PLACEHOLDER
   `think35` protocol's. The 8k cap cuts many more answers than 32k does, so the accuracies are lower than the post's;
   the comparison between the three models is the point.
 - mlx-lm 0.32 does not know the text-only config's `model_type` (`qwen3_5_text`); `score.py` loads it as `qwen3_5`,
-  whose loader maps the same `model.language_model.*` tensor names.
+  whose loader maps the same `model.language_model.*` tensor names. `score.py` starts a new mlx-lm batch generator
+  every 64 prompts: one generator for all 200 stopped after ~140 answers with `[metal::malloc] Resource limit (499000)
+  exceeded` (its per-answer presence-penalty buffers).
 - `../code/mathqa.py` imports a multiple-choice module (`mcqa`) that is not in the repo; `score.py` stubs it, since
   grading never calls it.

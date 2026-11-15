@@ -21,7 +21,7 @@ sys.path.insert(0, os.path.join(HERE, "..", "code"))
 sys.modules.setdefault("mcqa", types.SimpleNamespace(loop_signals=None))   # mathqa imports it; grading never uses it
 import mathqa as Q  # noqa: E402
 
-N, MAX_TOKENS, BATCH = 100, 8192, 32
+N, MAX_TOKENS, BATCH, CHUNK = 100, 8192, 32, 64
 
 
 def problems():
@@ -42,31 +42,37 @@ def generate(name, todo):
         return
     model, tok = load(os.path.join(HERE, "weights", name), model_config={"model_type": "qwen3_5"})
     mx.random.seed(len(done))
-    gen = BatchGenerator(model, max_tokens=MAX_TOKENS, stop_tokens=[[t] for t in tok.eos_token_ids],
-                         sampler=make_sampler(temp=0.6, top_p=0.95, top_k=20),
-                         logits_processors=make_logits_processors(presence_penalty=1.5, presence_context_size=MAX_TOKENS),
-                         completion_batch_size=BATCH)
     prompts = [tok.apply_chat_template([{"role": "user", "content": Q.build_prompt(r["problem"])}],
                                        add_generation_prompt=True, enable_thinking=True) for r in todo]
-    rows = dict(zip(gen.insert(prompts), todo))
-    toks = {u: [] for u in rows}
-    with open(path, "a") as f:
-        while responses := gen.next_generated():
-            for res in responses:
-                if res.finish_reason != "stop":
-                    toks[res.uid].append(res.token)
-                if res.finish_reason is None:
-                    continue
-                r, t = rows[res.uid], toks.pop(res.uid)
-                text = tok.decode(t)
-                pred = Q.extract(text)[0]
-                ok = Q.is_correct(pred, r["answer"])
-                f.write(json.dumps({**r, "text": text, "tokens": len(t), "cut": res.finish_reason == "length",
-                                    "pred": pred, "correct": ok}) + "\n")
-                f.flush()
-                done.add(r["id"])
-                print(f"{name} {len(done)}/{2 * N} {r['id']} tokens {len(t)} correct {ok}", flush=True)
-    gen.close()
+    # a fresh generator per CHUNK prompts: mlx-lm's per-sequence presence-penalty buffers pile up Metal buffers
+    # until "[metal::malloc] Resource limit (499000) exceeded" (hit after ~140 sequences in one generator)
+    for c in range(0, len(todo), CHUNK):
+        gen = BatchGenerator(model, max_tokens=MAX_TOKENS, stop_tokens=[[t] for t in tok.eos_token_ids],
+                             sampler=make_sampler(temp=0.6, top_p=0.95, top_k=20),
+                             logits_processors=make_logits_processors(presence_penalty=1.5,
+                                                                      presence_context_size=MAX_TOKENS),
+                             completion_batch_size=BATCH)
+        rows = dict(zip(gen.insert(prompts[c:c + CHUNK]), todo[c:c + CHUNK]))
+        toks = {u: [] for u in rows}
+        with open(path, "a") as f:
+            while responses := gen.next_generated():
+                for res in responses:
+                    if res.finish_reason != "stop":
+                        toks[res.uid].append(res.token)
+                    if res.finish_reason is None:
+                        continue
+                    r, t = rows[res.uid], toks.pop(res.uid)
+                    text = tok.decode(t)
+                    pred = Q.extract(text)[0]
+                    ok = Q.is_correct(pred, r["answer"])
+                    f.write(json.dumps({**r, "text": text, "tokens": len(t), "cut": res.finish_reason == "length",
+                                        "pred": pred, "correct": ok}) + "\n")
+                    f.flush()
+                    done.add(r["id"])
+                    print(f"{name} {len(done)}/{2 * N} {r['id']} tokens {len(t)} correct {ok}", flush=True)
+        gen.close()
+        del gen
+        mx.clear_cache()
 
 
 def table():
