@@ -18,7 +18,7 @@ from mlx_lm.sample_utils import make_logits_processors, make_sampler
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.dont_write_bytecode = True   # keep ../code free of __pycache__
 sys.path.insert(0, os.path.join(HERE, "..", "code"))
-sys.modules.setdefault("mcqa", types.SimpleNamespace(loop_signals=None))   # mathqa imports it; grading never uses it
+sys.modules.setdefault("mcqa", types.SimpleNamespace(loop_signals=lambda t: {"repetitive_end": None}))   # mathqa imports it
 import mathqa as Q  # noqa: E402
 
 N, MAX_TOKENS, BATCH, CHUNK = 100, 8192, 32, 64
@@ -87,6 +87,9 @@ def table():
             if x:
                 print(f"{name:12s} {s:8s} {len(x):3d}  {100 * sum(r['correct'] for r in x) / len(x):7.1f}%  "
                       f"{100 * sum(r['cut'] for r in x) / len(x):10.1f}%")
+        cut = [r for r in rows if r["cut"]]
+        loop = sum(Q.loop_signals(r["text"])["verbatim_loop_end"] for r in cut)
+        print(f"{name:12s} cut answers ending in a verbatim loop: {loop} of {len(cut)}")
 
 
 if __name__ == "__main__":

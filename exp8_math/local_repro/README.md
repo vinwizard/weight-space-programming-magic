@@ -95,7 +95,7 @@ the size of the edit (bfloat16 forward passes on Apple's GPU instead of the expe
 
 ## Results
 
-100 MATH-500 + 100 GSM8K test problems, 1 sample each, at most 8,192 new tokens (output of `score.py`; the
+100 MATH-500 + 100 GSM8K test problems, 1 sample each, at most 8,192 new tokens (output of `score.py`, both sets together in the last column; the
 generation took about 80 minutes for the three models on the M5 Pro):
 
 | Model | MATH-500 | GSM8K | MATH-500 cut at 8,192 | GSM8K cut at 8,192 | cut answers ending in a verbatim loop |
